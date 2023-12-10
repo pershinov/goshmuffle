@@ -1,26 +1,30 @@
 package goshmuffle
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"sync"
 	"syscall"
 )
 
-type result interface {
-	Store(s string)
-}
-
 type runner struct {
+	// config
 	cmd  string
 	args []string
-	res  result
+	out  out
 
+	// cmd
 	exec   *exec.Cmd
-	stderr io.ReadCloser
+	stdout io.ReadCloser
+
+	// state
+	state state
+	mu    sync.RWMutex
+
+	// context
+	cancel context.CancelFunc
 }
 
 func New(
@@ -33,55 +37,53 @@ func New(
 	}
 }
 
-func (cr *runner) WithResult(r result) *runner {
-	cr.res = r
-	return cr
+func (r *runner) WithOut(o out) *runner {
+	r.out = o
+	return r
 }
 
-func (cr *runner) Run(ctx context.Context) (err error) {
-	cr.exec = exec.CommandContext(ctx, cr.cmd, cr.args...)
-	cr.exec.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+func (r *runner) Run(ctx context.Context) (err error) {
+	ctx, r.cancel = context.WithCancel(ctx)
 
-	cr.stderr, err = cr.exec.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("stderr pipe: %w", err)
+	// configure cmd
+	r.exec = exec.CommandContext(ctx, r.cmd, r.args...)
+	r.exec.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// configure stdout
+	if r.out != nil {
+		r.stdout, err = r.exec.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("stdout pipe: %w", err)
+		}
 	}
 
-	err = cr.exec.Start()
+	// run cmd
+	err = r.exec.Start()
 	if err != nil {
 		return fmt.Errorf("start cmd: %w", err)
 	}
 
-	if cr.res != nil {
-		err = cr.store()
+	// states control
+	r.setStateRunning()
+	defer func() {
+		r.setStateDone()
+	}()
+
+	// store out
+	if r.out != nil {
+		err = r.store()
 		if err != nil {
-			return fmt.Errorf("store result: %w", err)
+			return fmt.Errorf("store out: %w", err)
 		}
 	}
 
-	return cr.exec.Wait()
+	return r.exec.Wait()
 }
 
-func (cr *runner) store() error {
-	scanner := bufio.NewScanner(cr.stderr)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		m := scanner.Text()
-		cr.res.Store(m)
-	}
-
-	return nil
+func (r *runner) IsRunning() bool {
+	return r.isRunning()
 }
 
-func (cr *runner) Terminate() error {
-	if cr.exec == nil {
-		return errors.New("kill: exec is nil")
-	}
-
-	pgid, err := syscall.Getpgid(cr.exec.Process.Pid)
-	if err != nil {
-		return fmt.Errorf("get pid: %w", err)
-	}
-
-	return syscall.Kill(-pgid, 15)
+func (r *runner) IsDone() bool {
+	return r.isDone()
 }
