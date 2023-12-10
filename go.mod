@@ -1,1 +1,3 @@
-module github.com/alexeypershinov/goshmuffle
+module goshmuffle
+
+go 1.21.0
