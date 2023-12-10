@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"syscall"
 )
@@ -18,7 +19,8 @@ type runner struct {
 	args []string
 	res  result
 
-	exec *exec.Cmd
+	exec   *exec.Cmd
+	stderr io.ReadCloser
 }
 
 func New(
@@ -40,6 +42,11 @@ func (cr *runner) Run(ctx context.Context) (err error) {
 	cr.exec = exec.CommandContext(ctx, cr.cmd, cr.args...)
 	cr.exec.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	cr.stderr, err = cr.exec.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
 	err = cr.exec.Start()
 	if err != nil {
 		return fmt.Errorf("start cmd: %w", err)
@@ -56,12 +63,7 @@ func (cr *runner) Run(ctx context.Context) (err error) {
 }
 
 func (cr *runner) store() error {
-	stderr, err := cr.exec.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	scanner := bufio.NewScanner(stderr)
+	scanner := bufio.NewScanner(cr.stderr)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		m := scanner.Text()
