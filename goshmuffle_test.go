@@ -1,10 +1,12 @@
-package goshmuffle
+package goshmuffle_test
 
 import (
 	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pershinov/goshmuffle"
 )
 
 type res struct {
@@ -18,7 +20,7 @@ func (r *res) Store(s string) {
 func TestRun(t *testing.T) {
 	expected := "hello"
 	r := &res{}
-	cmd := New("echo", expected).WithOut(r)
+	cmd := goshmuffle.New("echo", expected).WithOut(r)
 
 	err := cmd.Run(context.Background())
 	if err != nil {
@@ -31,7 +33,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestTerminate(t *testing.T) {
-	cmd := New("sleep", "10")
+	cmd := goshmuffle.New("sleep", "10")
 	go func() {
 		err := cmd.Run(context.Background())
 		if err != nil && !strings.Contains(err.Error(), "terminated") {
